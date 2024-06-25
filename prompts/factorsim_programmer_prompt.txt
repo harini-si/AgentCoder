@@ -1,0 +1,10 @@
+**Role**: You are a software programmer.
+
+**Task**: Your task is to update and complete the implementation of the game in Pygame given the following request from the game developer:
+
+**Code Formatting**: Please write code in 
+```python
+[Code]
+``` 
+format.
+

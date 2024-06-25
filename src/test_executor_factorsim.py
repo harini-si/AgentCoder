@@ -38,7 +38,7 @@ idx_run_tests_canonical_solution = []
 idx_run_tests_fuzzer = []
 idx_run_tests_fuzzer_canonical_solution = []
 
-language = ["python", "cpp", "js", "go", "js"]
+language = ["python"]
 
 
 class TimeoutException(Exception):
@@ -128,70 +128,7 @@ def process_humaneval_test(
                 + "\n"
                 + f"check({sample['entry_point']})"
             )
-    elif language == "cpp":
-        test_set_up = ""
-        for s in IMPORT_HELPER["cpp"]:
-            if s not in prompt:
-                test_set_up += s + "\n"
-        # test_string = test_set_up + "\n" + prompt + code + "\n" + test
-        test_string = test_set_up + "\n" + code + "\n" + test
-    elif language == "java":
-        # if sample["declaration"] in code:
-        if "class Solution" in code:
-            test_string = code + "\n" + test
-        else:
-            test_string = prompt + code + "\n" + test
-        # else:
-        #     test_string = prompt + code + "\n" + test
-    elif language == "js" or language == "javascript":
-        # test_string = prompt + code + "\n" + test
-        test_string = code + "\n" + test
-    elif language == "go":
-        # import_string = problems[task_id]["import"]
-        # prompt = prompt.replace(import_string, "")
-        if example_test and "example_test" in problems[task_id]:
-            test = problems[task_id]["example_test"]
-        else:
-            test = problems[task_id]["test"]
-        candidate_import = [
-            "math.",
-            "strings.",
-            "strconv.",
-            "sort.",
-            "time.",
-            "regexp.",
-            "fmt.",
-            "bytes.",
-            "md5.",
-            "rand.",
-        ]
-        test_setup = 'package main\nimport (\n	"testing"\n	"github.com/stretchr/testify/assert"\n)'
-        total_string = sample["declaration"] + code + "\n" + test
-        other_pkgs = []
-        for pkg in candidate_import:
-            if pkg in total_string:
-                if pkg != "md5." and pkg != "rand":
-                    other_pkgs.append("    " + '"' + pkg[: len(pkg) - 1] + '"' + "\n")
-                elif pkg == "md5.":
-                    other_pkgs.append("    " + '"' + "crypto/md5" + '"' + "\n")
-                elif pkg == "rand.":
-                    other_pkgs.append("    " + '"' + "math/rand" + '"' + "\n")
-        if other_pkgs:
-            import_other_pkgs = (
-                "import (\n" + "    ".join([p + "\n" for p in other_pkgs]) + ")"
-            )
-            # test_string = test_setup + "\n" + import_other_pkgs + "\n" + prompt + code + "\n" + test
-            test_string = (
-                test_setup + "\n" + import_other_pkgs + "\n" + code + "\n" + test
-            )
-        else:
-            # test_string = test_setup + "\n" + prompt + code + "\n" + test
-            test_string = test_setup + "\n" + code + "\n" + test
-    elif language == "rust":
-        main = "\nfn main(){ \n } \n"
-        declaration = problems[task_id]["declaration"]
-        test_string = main + declaration + prompt + code + test
-    # print(test_string)
+    
     return test_string
 
 
