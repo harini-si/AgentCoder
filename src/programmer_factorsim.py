@@ -16,7 +16,6 @@ from datasets import load_dataset
 with open("../prompts/factorsim_prompts.json", "r") as f:
     dataset = json.load(f)
 
-dataset = dataset[0:1]
 
 
 prompt_path = "../prompts/factorsim_programmer_prompt.txt"
@@ -35,8 +34,24 @@ def preprocess_data(completion_string):
     return completion_string
 
 
+def call_fetch_completion_helper(dataset, model, lg):
+    print("Fixing bug...")
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        future_to_entry = {
+            executor.submit(fetch_completion, copy.deepcopy(entry), model, lg): entry
+            for entry in tqdm(dataset)
+        }
+        for future in tqdm(concurrent.futures.as_completed(future_to_entry)):
+            entry = future_to_entry[future]
+            try:
+                updated_entry = future.result()
+                idx = dataset.index(entry)
+                dataset[idx] = updated_entry
+            except Exception as e:
+                print(repr(e))
+    return dataset
 # Function to fetch completion
-def fetch_completion(data_entry, model, lg, times=1):
+def fetch_completion(data_entry, model, lg, times=10):
     global construct_few_shot_prompt
     prompt = data_entry["prompt"]
     existing_code= data_entry["backbone"]
@@ -85,7 +100,7 @@ if __name__ == "__main__":
     for model in model_list:
         for lg in language:
 
-            with ThreadPoolExecutor(max_workers=1) as executor:
+            with ThreadPoolExecutor(max_workers=5) as executor:
                 future_to_entry = {
                     executor.submit(
                         fetch_completion, copy.deepcopy(entry), model, lg

@@ -1,264 +1,157 @@
-# test
-import random
+import os
+import re
 import json
-from typing import Optional, Callable, Dict
-import ast
-import doctest
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import inspect
-import numpy as np
+from openai import OpenAI
+import json
+import re
+import os
+import subprocess
+import signal
+import sys
+import tempfile
+import importlib.util
+from programmer_factorsim import call_fetch_completion_helper
+
+
 import sys
 
-sys.path.append("./CodeGeeX/")
-import contextlib
-import faulthandler
-import io
-import os
-import multiprocessing
-import platform
-import signal
-import concurrent.futures
-from tqdm import tqdm
-from tqdm import tqdm
-from programmer_humaneval import call_fetch_completion_helper
-from test_designer import call_fetch_test_completion_helper
-from codegeex.benchmark.utils import read_dataset, IMPORT_HELPER
-from codegeex.benchmark.execution import check_correctness
-import tempfile
+os.environ["SDL_VIDEODRIVER"] = "dummy"
+def run_code(code, timeout=10):
+    # Timeout handler function
+    def timeout_handler(signum, frame):
+        raise TimeoutError
 
-correct_doctest = 0
-correct_before_doctest = 0
-correct_after_doctest = 0
-result_original = 0
-result_canonical_solution = 0
-result_fuzzer = 0
-result_fuzzer_canonical_solution = 0
-idx_run_tests_orginal = []
-idx_run_tests_canonical_solution = []
-idx_run_tests_fuzzer = []
-idx_run_tests_fuzzer_canonical_solution = []
-
-language = ["python"]
-
-
-class TimeoutException(Exception):
-    pass
-
-
-class WriteOnlyStringIO(io.StringIO):
-    """StringIO that throws an exception when it's read from"""
-
-    def read(self, *args, **kwargs):
-        raise IOError
-
-    def readline(self, *args, **kwargs):
-        raise IOError
-
-    def readlines(self, *args, **kwargs):
-        raise IOError
-
-    def readable(self, *args, **kwargs):
-        """Returns True if the IO object can be read."""
-        return False
-
-
-class redirect_stdin(contextlib._RedirectStream):  # type: ignore
-    _stream = "stdin"
-
-
-@contextlib.contextmanager
-def swallow_io():
-    stream = WriteOnlyStringIO()
-    with contextlib.redirect_stdout(stream):
-        with contextlib.redirect_stderr(stream):
-            with redirect_stdin(stream):
-                yield
-
-
-@contextlib.contextmanager
-def time_limit(seconds: float):
-    def signal_handler(signum, frame):
-        raise TimeoutException("Timed out!")
-
-    signal.setitimer(signal.ITIMER_REAL, seconds)
-    signal.signal(signal.SIGALRM, signal_handler)
     try:
-        yield
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(timeout)
 
+        code = "import os\n" + 'os.environ["SDL_VIDEODRIVER"] = "dummy"\n' + code
+        # Create a temporary Python file to store the code
+        with tempfile.NamedTemporaryFile(
+            suffix=".py", delete=False, mode="w"
+        ) as tmp_file:
+            tmp_file_name = tmp_file.name
+            tmp_file.write(code)
 
-def process_humaneval_test(
-    sample, problems, example_test=False, language=language, test_case=True
-):
-    task_id = sample["task_id"]
-    task_id = problems.index(sample)
-    prompt = sample["prompt"]
-    if (
-        example_test
-        and "example_test" in problems[task_id]
-        and problems[task_id]["example_test"] != ""
-    ):
-        test = problems[task_id]["example_test"]
-    else:
-        test = problems[task_id]["test"]
-    if test_case:
-        test = problems[task_id]["test_case"]
-    code = sample["completion"]
-    # Pre-process for different languages
-    if language == "python":
-        code_ = []
-        test_setup = "\n".join(IMPORT_HELPER["python"]) + "\n"
-        if f"class sample['entry_point']" in code:
-            test_string = (
-                test_setup
-                + code
-                + "\n"
-                + test
-                + "\n"
-                + f"check({sample['entry_point']})"
-            )
+        # Run the Python script using subprocess
+        result = subprocess.run(
+            ["python", tmp_file_name], capture_output=True, text=True
+        )
+
+        # Capture stdout and stderr
+        stdout = result.stdout
+        stderr = result.stderr
+
+        signal.alarm(0)
+        return stdout, stderr
+
+    except TimeoutError:
+        return None, "The code took too long to execute."
+
+def save_json_to_file(json_data, file_path):
+    # even if the file_path is not valid, it will create the file
+    with open(file_path, "w+") as f:
+        json.dump(json_data, f, indent=4)
+
+# Timeout handler function
+def timeout_handler(signum, frame):
+    raise TimeoutError
+def run_sanity_check(code):
+    try:
+        no_condition_code = code.replace("while running:", "for _ in range(300):")
+        stdout, stderr = run_code(no_condition_code)
+        return stdout, stderr
+    except:
+        stdout = ""
+        stderr = "code failed to run"
+        return stdout, stderr
+
+def execute_file(test_file_path, implementation_path):
+    result = subprocess.run(
+        ["python", test_file_path, implementation_path], capture_output=True, text=True
+    )
+
+    stdout = result.stdout
+    stderr = result.stderr
+    # print(stdout)
+    # print(stderr)
+    # Use regular expressions to find passed tests
+    passed_tests = re.findall(r"test_[a-zA-Z_0-9]+ \(.*\) ... ok", stderr)
+    passed_tests = [
+        re.match(r"(test_[a-zA-Z_0-9]+) \(.*\) ... ok", test).group(1)
+        for test in passed_tests
+    ]
+
+    # Use regular expressions to find failed tests
+    failed_tests = re.findall(r"test_[a-zA-Z_0-9]+ \(.*\) ... FAIL", stderr)
+    failed_tests = [
+        re.match(r"(test_[a-zA-Z_0-9]+) \(.*\) ... FAIL", test).group(1)
+        for test in failed_tests
+    ]
+
+    error_tests = re.findall(r"test_[a-zA-Z_0-9]+ \(.*\) ... ERROR", stderr)
+    error_tests = [
+        re.match(r"(test_[a-zA-Z_0-9]+) \(.*\) ... ERROR", test).group(1)
+        for test in error_tests
+    ]
+    return passed_tests, failed_tests, error_tests
+
+def run_eval(test_file_path, implementation_path, game_name, timeout=20):
+    json_result = None
+    try:
+        # Set the signal alarm
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(timeout)
+        passed_tests, failed_tests, error_tests = execute_file(
+            test_file_path, implementation_path
+        )
+        # with open(f"{game_name}_test_results.json", "r") as f:
+        #     json_result = json.load(f)
+        total_tests = len(passed_tests) + len(failed_tests) + len(error_tests)
+        # print(f"GPT4 (context) Passed Tests for {game_name}: {passed_tests}")
+        # print(f"GPT4 (context) Failed Tests for {game_name}: {failed_tests}")
+        # print(f"GPT4 (context) Error Tests for {game_name}: {error_tests}\n")
+        if total_tests == 0:
+            # couldn't eveen import the file
+            acc = 0
         else:
-            test_string = (
-                test_setup
-                + prompt
-                + code
-                + "\n"
-                + test
-                + "\n"
-                + f"check({sample['entry_point']})"
-            )
-    
-    return test_string
+            acc = len(passed_tests) / total_tests
+        signal.alarm(0)
 
-
-def preprocess_data(task, lg):
-    if f"```{lg}" in task["completion"]:
-        task["completion"] = task["completion"][
-            task["completion"].find(f"```{lg}") + len(f"```{lg}") :
-        ]
-        task["completion"] = task["completion"][: task["completion"].find("```")]
-    elif "```" in task["completion"]:
-        task["completion"] = task["completion"][task["completion"].find("```") + 3 :]
-        task["completion"] = task["completion"][: task["completion"].find("```")]
-
-    if f"```{lg}" in task["prompt"]:
-        task["prompt"] = task["prompt"][
-            task["prompt"].find(f"```{lg}") + len(f"```{lg}") :
-        ]
-        task["prompt"] = task["prompt"][: task["prompt"].find("```")]
-    elif "```" in task["prompt"]:
-        task["prompt"] = task["prompt"][task["prompt"].find("```") + 3 :]
-        task["prompt"] = task["prompt"][: task["prompt"].find("```")]
-
-    if "assert" in task["prompt"]:
-        task["prompt"] = task["prompt"][: task["prompt"].find("assert")]
-    return task
-
-
-def test_report(dataset, lg):
-    correct = 0
-    test_setup = "\n".join(IMPORT_HELPER["python"]) + "\n"
-    for i in tqdm(range(len(dataset))):
-        try:
-            with swallow_io():
-                with time_limit(2.0):
-                    exec(
-                        test_setup
-                        + "\n"
-                        + dataset[i]["completion"]
-                        + "\n"
-                        + dataset[i]["test"]
-                        + "\n"
-                        + f"check({dataset[i]['entry_point']})"
-                    )
-                correct += 1
-        except Exception as exc:
-            pass
-    print("==============Start Report Testing==============")
-    print(f"test_report: {(correct/len(dataset)*100):.1f}")
-
-
-def test_agent_concurrency(dataset, lg):
-    test_setup = "\n".join(IMPORT_HELPER["python"]) + "\n"
-    total_correct = 0
-    _for_completion = 0
-
-    def process_item(i):
-        if (
-            "need_reproduce" in dataset[i].keys()
-            and dataset[i]["need_reproduce"] == False
-        ):
-            # dataset[i]["need_reproduce"] = True
-            return dataset[i]["max_correct"], dataset[i]["idx"]
-        completion_list = dataset[i]["completion_list"]
-        test_case_list = dataset[i]["test_case_list"]
-        correct_list = []
-
-        for j in range(len(completion_list)):
-            correct = 0
-            if f"def {dataset[i]['entry_point']}" not in completion_list[j]:
-                correct_list.append(correct)
-                continue
-            for k in range(len(test_case_list)):
-                if f"assert {dataset[i]['entry_point']}(" not in test_case_list[k]:
-                    continue
-                dataset[i]["full_code"] = (
-                    test_setup + "\n" + completion_list[j] + "\n" + test_case_list[k]
-                )
-                result = check_correctness(
-                    dataset[i]["task_id"], dataset[i], lg, 3, "./tmp"
-                )
-                if result["passed"]:
-                    correct += 1
-            correct_list.append(correct)
-
-        max_correct = max(correct_list)
-        idx = correct_list.index(max_correct)
-
-        return max_correct, idx
-
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        futures = [executor.submit(process_item, i) for i in range(len(dataset))]
-
-        for future in tqdm(
-            concurrent.futures.as_completed(futures), total=len(dataset)
-        ):
-            max_correct, idx = future.result()
-            if (
-                max_correct >= 3
-            ):  # GPT-3.5-turbo-1106's test case accuracy is about 67%. So we choice 60% as the bar.
-                i = futures.index(future)
-                dataset[i]["completion"] = dataset[i]["completion_list"][idx]
-                dataset[i]["need_reproduce"] = False
-                dataset[i]["idx"] = idx
-                dataset[i]["max_correct"] = max_correct
-                _for_completion += 1
-            else:
-                i = futures.index(future)
-                dataset[i]["completion"] = dataset[i]["completion_list"][idx]
-
-    print("==============Start Agent Testing==============")
-    print(f"test_report: {(total_correct/len(dataset)*100):.1f}")
-    print(f"test_for_completion: {(_for_completion/len(dataset)*100):.1f}")
-    return dataset
+    except TimeoutError:
+        print("function timed out")
+        acc = 0
+    json_result = ""
+    return json_result, acc
 
 
 if __name__ == "__main__":
-    model_list = ["gpt-3.5-turbo-1106"]
-    language = ["python"]
-    for model in model_list:
-        for lg in language:
-            path = f"./dataset/{model}_{lg}.json"
-            with open(path, "r") as f:
-                dataset = json.load(f)
-            epoch = 5
-            for current_epoch in range(epoch):
-                dataset = test_agent_concurrency(dataset, lg)
-                test_report(dataset, lg)
-                dataset = call_fetch_completion_helper(dataset, model, lg)
-                dataset = call_fetch_test_completion_helper(dataset, model, lg)
-                with open(f"./dataset/{model}_{current_epoch}.json", "w") as f:
-                    json.dump(dataset, f, indent=4)
-            dataset = test_agent_concurrency(dataset, lg)
-            test_report(dataset, lg)
+    model = "gpt-3.5-turbo-1106"
+    lg = "python"
+    with open(f'../dataset/{model}_{lg}.json') as f:
+        dataset = json.load(f)
+        
+    for i in range(5):
+        for game in dataset:
+            game_name = game["game"]
+            completion_list = game["completion_list"]
+            tests = game["test_case_list"]
+            
+            for idx in range(len(completion_list)):
+                print(f"Running {game_name} {idx}")
+                completion = completion_list[idx]
+                tests= tests[idx]
+                test_file_path = f"../temp_test.py"
+                implementation_path = f"../temp_implementation.py"
+                with open(test_file_path, "w") as f:
+                    f.write(tests)
+                with open(implementation_path, "w") as f:
+                    f.write(completion)
+                
+                json_result, acc = run_eval(test_file_path, implementation_path, game_name=game_name)
+                dataset[idx]["report_result"] = json_result
+                dataset[idx]["report_accuracy"] = acc
+        dataset = call_fetch_completion_helper(dataset, model, lg)
+        with open(f'../dataset/{model}_{lg}.json', 'w') as f:
+            json.dump(dataset, f, indent=4)
+        
