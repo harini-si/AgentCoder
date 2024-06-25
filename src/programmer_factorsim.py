@@ -68,6 +68,27 @@ Follow the specifications provided in the subsequent (incomplete) implementation
 - Do not hallucinate external image files (e.g., .png, .jpg) or sound effects(e.g., mp3).
 - PLEASE RETURN THE COMPLETE IMPLEMENTATION OF THE GAME, NOT JUST THE PROVIDED EXISTING CODE.
 """
+    if "passed" in data_entry.keys() and data_entry["passed"] == True:
+        return data_entry
+    elif "passed" in data_entry.keys() and data_entry["passed"] == False:
+        prompt = data_entry["prompt"]
+        test_case = data_entry["test_case_list"][0]
+
+        tests = ""
+        for test in test_case:
+            tests += "\n" + test
+        text = f"""
+    construct_few_shot_prompt
+
+    **Task**:
+    ```python
+    {prompt}
+    ```
+    Your code should pass these tests:
+    ```python
+    {tests}
+    ```
+    """
     completions_code = []
     for i in range(times):
         while True:

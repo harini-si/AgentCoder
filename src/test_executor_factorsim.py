@@ -131,7 +131,7 @@ if __name__ == "__main__":
     with open(f'../dataset/{model}_{lg}.json') as f:
         dataset = json.load(f)
         
-    for i in range(5):
+    for i in range(2):
         for game in dataset:
             game_name = game["game"]
             completion_list = game["completion_list"]
@@ -151,6 +151,7 @@ if __name__ == "__main__":
                 json_result, acc = run_eval(test_file_path, implementation_path, game_name=game_name)
                 dataset[idx]["report_result"] = json_result
                 dataset[idx]["report_accuracy"] = acc
+                dataset[idx]['passed'] = acc == 1.0
         dataset = call_fetch_completion_helper(dataset, model, lg)
         with open(f'../dataset/{model}_{lg}.json', 'w') as f:
             json.dump(dataset, f, indent=4)
